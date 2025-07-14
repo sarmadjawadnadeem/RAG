@@ -3,6 +3,7 @@
 import os
 import tempfile
 import httpx
+import traceback
 from functools import lru_cache
 from fastapi import FastAPI, Form, HTTPException, File, UploadFile, Depends
 from fastapi.responses import StreamingResponse
@@ -29,7 +30,7 @@ JINA_API_KEY = os.environ.get("JINA_API_KEY")
 app = FastAPI(
     title="FastAPI RAG with Jina Embeddings",
     description="A RAG application optimized for Vercel with robust dependency injection.",
-    version="0.7.0", # Re-architected with dependency injection
+    version="0.7.1", # Added enhanced logging
 )
 
 # --- Dependency Injection Setup ---
@@ -85,17 +86,24 @@ async def upload_and_process(
     This single endpoint handles uploading a file and processing it into the vector store.
     """
     try:
+        print("INFO: Starting upload and process.")
         file_content = await file.read()
-        
+        print(f"INFO: Read {len(file_content)} bytes from file '{file.filename}'.")
+
         # Upload to Vercel Blob
+        print("INFO: Uploading to Vercel Blob...")
         blob = put(file.filename, file_content)
+        print(f"INFO: Successfully uploaded to Vercel Blob. URL: {blob.url}")
 
         # Process the file
+        print("INFO: Writing to temporary file...")
         with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as tmp_file:
             tmp_file.write(file_content)
             tmp_file_path = tmp_file.name
+        print(f"INFO: Temporary file created at {tmp_file_path}")
 
         file_extension = os.path.splitext(file.filename)[1].lower()
+        print(f"INFO: Loading document with extension {file_extension}...")
         if file_extension == ".pdf":
             loader = PyPDFLoader(tmp_file_path)
         elif file_extension == ".docx":
@@ -108,16 +116,22 @@ async def upload_and_process(
 
         docs = loader.load()
         os.remove(tmp_file_path)
+        print(f"INFO: Document loaded. Number of pages/docs: {len(docs)}")
 
+        print("INFO: Splitting document into chunks...")
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         splits = text_splitter.split_documents(docs)
+        print(f"INFO: Document split into {len(splits)} chunks.")
         
         # Add documents to the vector store
+        print("INFO: Adding documents to vector store...")
         await vectorstore.aadd_documents(splits)
+        print("INFO: Successfully added documents to vector store.")
 
         return {"status": "success", "filename": file.filename, "blob_url": blob.url}
     except Exception as e:
         print(f"ERROR during upload/processing: {e}")
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
 @app.post("/query/", summary="Query the RAG Chain")
