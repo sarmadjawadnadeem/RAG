@@ -13,4 +13,8 @@ psycopg2-binary
 
 
 sentence-transformers
-unstructured[docx,pdf]
+
+
+pypdf
+python-docx
+docx2txt
