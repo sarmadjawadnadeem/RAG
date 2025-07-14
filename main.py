@@ -30,7 +30,7 @@ JINA_API_KEY = os.environ.get("JINA_API_KEY")
 app = FastAPI(
     title="FastAPI RAG with Jina Embeddings",
     description="A RAG application optimized for Vercel with robust dependency injection.",
-    version="0.7.1", # Added enhanced logging
+    version="0.7.2", # Fixed database driver issue
 )
 
 # --- Dependency Injection Setup ---
@@ -52,11 +52,18 @@ def get_embeddings():
 def get_vectorstore():
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL not set")
+    
+    # FIX: Ensure the connection string uses the correct 'psycopg' driver for SQLAlchemy
+    # by replacing 'postgresql://' with 'postgresql+psycopg://'
+    connection_string = DATABASE_URL
+    if connection_string.startswith("postgresql://"):
+        connection_string = connection_string.replace("postgresql://", "postgresql+psycopg://", 1)
+
     embeddings = get_embeddings()
     vectorstore = PGVector(
         embeddings=embeddings,
         collection_name="rag_documents",
-        connection=DATABASE_URL,
+        connection=connection_string, # Use the modified connection string
         use_jsonb=True,
     )
     # Test connection
