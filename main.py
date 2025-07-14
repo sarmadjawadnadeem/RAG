@@ -31,7 +31,7 @@ JINA_API_KEY = os.environ.get("JINA_API_KEY")
 app = FastAPI(
     title="FastAPI RAG with Jina Embeddings",
     description="A RAG application optimized for Vercel by using API-based embeddings.",
-    version="0.5.6", # Incremented version for debugging
+    version="0.5.7", # Incremented version for debugging
 )
 
 # --- Pydantic Models for Request Bodies ---
@@ -84,8 +84,9 @@ async def create_upload_url(request: UploadRequest):
     STEP 1: The client requests a secure URL to upload a file directly to Vercel Blob.
     """
     try:
-        # FIX: The put() function does not expect a 'body' argument when generating a URL.
-        blob = put(request.filename, add_random_suffix=True)
+        # FIX: The put() function in this version does not expect 'add_random_suffix'.
+        # The library now adds a random suffix by default.
+        blob = put(request.filename)
         return JSONResponse(content={"url": blob.url, "downloadUrl": blob.download_url})
     except Exception as e:
         # DEBUG: Return the exact error message in the response for easy debugging.
