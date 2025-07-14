@@ -3,7 +3,7 @@
 import os
 import tempfile
 import httpx
-from fastapi import FastAPI, Form, HTTPException
+from fastapi import FastAPI, Form, HTTPException, File, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 # Correctly import the error class for the installed vercel-blob version
@@ -31,16 +31,8 @@ JINA_API_KEY = os.environ.get("JINA_API_KEY")
 app = FastAPI(
     title="FastAPI RAG with Jina Embeddings",
     description="A RAG application optimized for Vercel by using API-based embeddings.",
-    version="0.5.9", # Incremented version for the final fix
+    version="0.6.0", # Re-architected for direct upload
 )
-
-# --- Pydantic Models for Request Bodies ---
-class UploadRequest(BaseModel):
-    filename: str
-
-class ProcessRequest(BaseModel):
-    url: str
-    filename: str
 
 # --- Global Variables & Initialization ---
 chat = None
@@ -78,42 +70,29 @@ def startup_event():
 async def root():
     return {"message": "Welcome to the FastAPI RAG application with Jina Embeddings!"}
 
-@app.post("/create-upload-url/", summary="Create a Pre-signed URL for Upload")
-async def create_upload_url(request: UploadRequest):
+@app.post("/upload-and-process/", summary="Upload and Process a Document")
+async def upload_and_process(file: UploadFile = File(...)):
     """
-    STEP 1: The client requests a secure URL to upload a file directly to Vercel Blob.
-    """
-    try:
-        # FIX: The put() function requires an empty bytes object for the data argument
-        # when generating a pre-signed URL.
-        blob = put(request.filename, b'')
-        return JSONResponse(content={"url": blob.url, "downloadUrl": blob.download_url})
-    except Exception as e:
-        # DEBUG: Return the exact error message in the response for easy debugging.
-        print(f"ERROR in create_upload_url: {e}")
-        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
-
-@app.post("/process-document/", summary="Process a Document from Vercel Blob")
-async def process_document(request: ProcessRequest):
-    """
-    STEP 2: After the client uploads the file to the blob, it calls this endpoint
-    with the blob's URL. The backend then downloads and processes the file.
+    This single endpoint handles both uploading the file to Vercel Blob
+    and processing it into the vector store.
     """
     if not vectorstore:
         raise HTTPException(status_code=503, detail="Vector store not initialized.")
 
-    file_extension = os.path.splitext(request.filename)[1].lower()
-    
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(request.url)
-            response.raise_for_status()
-            file_content = response.content
+        # Read the file content into memory
+        file_content = await file.read()
+        
+        # Upload the file content directly to Vercel Blob
+        # The body is the file content we just read.
+        blob = put(file.filename, file_content)
 
-        with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as tmp_file:
+        # The rest of the processing is the same, but we use the in-memory content
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as tmp_file:
             tmp_file.write(file_content)
             tmp_file_path = tmp_file.name
 
+        file_extension = os.path.splitext(file.filename)[1].lower()
         if file_extension == ".pdf":
             loader = PyPDFLoader(tmp_file_path)
         elif file_extension == ".docx":
@@ -131,11 +110,11 @@ async def process_document(request: ProcessRequest):
         splits = text_splitter.split_documents(docs)
         await vectorstore.aadd_documents(splits)
 
-        return {"status": "success", "message": f"Successfully processed '{request.filename}'."}
+        return {"status": "success", "filename": file.filename, "blob_url": blob.url}
     except Exception as e:
-        if 'tmp_file_path' in locals() and os.path.exists(tmp_file_path):
-            os.remove(tmp_file_path)
-        raise HTTPException(status_code=500, detail=f"Failed to process file: {str(e)}")
+        print(f"ERROR during upload/processing: {e}")
+        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
+
 
 @app.post("/query/", summary="Query the RAG Chain")
 async def query_rag(query: str = Form(...)):
