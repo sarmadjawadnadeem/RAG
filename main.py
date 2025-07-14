@@ -7,8 +7,7 @@ from fastapi import FastAPI, Form, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 # Correctly import the error class for the installed vercel-blob version
-from vercel_blob import put
-from vercel_blob import BlobFileError
+from vercel_blob import put, BlobFileError
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader, TextLoader
@@ -32,7 +31,7 @@ JINA_API_KEY = os.environ.get("JINA_API_KEY")
 app = FastAPI(
     title="FastAPI RAG with Jina Embeddings",
     description="A RAG application optimized for Vercel by using API-based embeddings.",
-    version="0.5.3", # Incremented version for the fix
+    version="0.5.4", # Incremented version for the final fix
 )
 
 # --- Pydantic Models for Request Bodies ---
@@ -85,9 +84,9 @@ async def create_upload_url(request: UploadRequest):
     STEP 1: The client requests a secure URL to upload a file directly to Vercel Blob.
     """
     try:
-        blob = put(pathname=request.filename, body=None, add_random_suffix=True)
+        # FIX: The 'pathname' argument is now the first positional argument.
+        blob = put(request.filename, body=None, add_random_suffix=True)
         return JSONResponse(content={"url": blob.url, "downloadUrl": blob.download_url})
-    # Use the correct error class name based on the library's update
     except BlobFileError as e:
         raise HTTPException(status_code=500, detail=f"Failed to create upload URL: {str(e)}")
 
