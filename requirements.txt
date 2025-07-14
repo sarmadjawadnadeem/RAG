@@ -13,8 +13,10 @@ psycopg2-binary
 
 
 sentence-transformers
-
-
 pypdf
 python-docx
 docx2txt
+
+
+vercel-blob
+httpx
