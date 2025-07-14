@@ -31,7 +31,7 @@ JINA_API_KEY = os.environ.get("JINA_API_KEY")
 app = FastAPI(
     title="FastAPI RAG with Jina Embeddings",
     description="A RAG application optimized for Vercel by using API-based embeddings.",
-    version="0.5.5", # Incremented version for the final fix
+    version="0.5.6", # Incremented version for debugging
 )
 
 # --- Pydantic Models for Request Bodies ---
@@ -87,8 +87,11 @@ async def create_upload_url(request: UploadRequest):
         # FIX: The put() function does not expect a 'body' argument when generating a URL.
         blob = put(request.filename, add_random_suffix=True)
         return JSONResponse(content={"url": blob.url, "downloadUrl": blob.download_url})
-    except BlobFileError as e:
-        raise HTTPException(status_code=500, detail=f"Failed to create upload URL: {str(e)}")
+    except Exception as e:
+        # DEBUG: Return the exact error message in the response for easy debugging.
+        # This will show us if it's an API key issue or something else.
+        print(f"ERROR in create_upload_url: {e}")
+        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
 @app.post("/process-document/", summary="Process a Document from Vercel Blob")
 async def process_document(request: ProcessRequest):
