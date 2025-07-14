@@ -3,66 +3,72 @@
 import os
 import tempfile
 import httpx
-from fastapi import FastAPI, Form, HTTPException, File, UploadFile
-from fastapi.responses import JSONResponse, StreamingResponse
+from functools import lru_cache
+from fastapi import FastAPI, Form, HTTPException, File, UploadFile, Depends
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-# Correctly import the error class for the installed vercel-blob version
-from vercel_blob import put, BlobFileError
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader, TextLoader
-# Import the new Jina Embeddings
 from langchain_community.embeddings import JinaEmbeddings
 from langchain_groq import ChatGroq
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain.chains import create_retrieval_chain
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_postgres import PGVector
+from vercel_blob import put
 
 # --- Configuration ---
 # Load environment variables
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 DATABASE_URL = os.environ.get("DATABASE_URL")
 BLOB_READ_WRITE_TOKEN = os.environ.get("BLOB_READ_WRITE_TOKEN")
-# Add the new Jina API Key environment variable
 JINA_API_KEY = os.environ.get("JINA_API_KEY")
 
 # --- FastAPI App Initialization ---
 app = FastAPI(
     title="FastAPI RAG with Jina Embeddings",
-    description="A RAG application optimized for Vercel by using API-based embeddings.",
-    version="0.6.0", # Re-architected for direct upload
+    description="A RAG application optimized for Vercel with robust dependency injection.",
+    version="0.7.0", # Re-architected with dependency injection
 )
 
-# --- Global Variables & Initialization ---
-chat = None
-embeddings = None
-vectorstore = None
-prompt = None
+# --- Dependency Injection Setup ---
+# Using lru_cache to ensure components are initialized only once per instance (on warm starts)
 
-@app.on_event("startup")
-def startup_event():
-    """Initialize models and database connection on application startup."""
-    global chat, embeddings, vectorstore, prompt
-    try:
-        print("INFO: Starting application initialization...")
-        if not all([GROQ_API_KEY, DATABASE_URL, BLOB_READ_WRITE_TOKEN, JINA_API_KEY]):
-            raise RuntimeError("One or more environment variables are not set. Please check all API keys and URLs.")
-        
-        chat = ChatGroq(temperature=0, model_name="Llama3-8b-8192", api_key=GROQ_API_KEY)
-        embeddings = JinaEmbeddings(jina_api_key=JINA_API_KEY, model_name="jina-embeddings-v2-base-en")
-        collection_name = "rag_documents"
-        vectorstore = PGVector(embeddings=embeddings, collection_name=collection_name, connection=DATABASE_URL, use_jsonb=True)
-        vectorstore.client.execute("SELECT 1")
-        prompt = ChatPromptTemplate.from_template(
-            """Answer the following question based only on the provided context. Think step-by-step. If the answer is not in the context, say so.
-            <context>{context}</context>
-            Question: {input}"""
-        )
-        print("INFO: Application initialization successful.")
-    except Exception as e:
-        print(f"FATAL: Application failed to start: {e}")
-        raise
+@lru_cache(maxsize=1)
+def get_chat_model():
+    if not GROQ_API_KEY:
+        raise RuntimeError("GROQ_API_KEY not set")
+    return ChatGroq(temperature=0, model_name="Llama3-8b-8192", api_key=GROQ_API_KEY)
+
+@lru_cache(maxsize=1)
+def get_embeddings():
+    if not JINA_API_KEY:
+        raise RuntimeError("JINA_API_KEY not set")
+    return JinaEmbeddings(jina_api_key=JINA_API_KEY, model_name="jina-embeddings-v2-base-en")
+
+@lru_cache(maxsize=1)
+def get_vectorstore():
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL not set")
+    embeddings = get_embeddings()
+    vectorstore = PGVector(
+        embeddings=embeddings,
+        collection_name="rag_documents",
+        connection=DATABASE_URL,
+        use_jsonb=True,
+    )
+    # Test connection
+    vectorstore.client.execute("SELECT 1")
+    return vectorstore
+
+def get_prompt_template():
+    return ChatPromptTemplate.from_template(
+        """Answer the following question based only on the provided context.
+        Think step-by-step. If the answer is not in the context, say so.
+        <context>{context}</context>
+        Question: {input}"""
+    )
 
 # --- API Endpoints ---
 
@@ -71,23 +77,20 @@ async def root():
     return {"message": "Welcome to the FastAPI RAG application with Jina Embeddings!"}
 
 @app.post("/upload-and-process/", summary="Upload and Process a Document")
-async def upload_and_process(file: UploadFile = File(...)):
+async def upload_and_process(
+    file: UploadFile = File(...),
+    vectorstore: PGVector = Depends(get_vectorstore)
+):
     """
-    This single endpoint handles both uploading the file to Vercel Blob
-    and processing it into the vector store.
+    This single endpoint handles uploading a file and processing it into the vector store.
     """
-    if not vectorstore:
-        raise HTTPException(status_code=503, detail="Vector store not initialized.")
-
     try:
-        # Read the file content into memory
         file_content = await file.read()
         
-        # Upload the file content directly to Vercel Blob
-        # The body is the file content we just read.
+        # Upload to Vercel Blob
         blob = put(file.filename, file_content)
 
-        # The rest of the processing is the same, but we use the in-memory content
+        # Process the file
         with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as tmp_file:
             tmp_file.write(file_content)
             tmp_file_path = tmp_file.name
@@ -108,6 +111,8 @@ async def upload_and_process(file: UploadFile = File(...)):
 
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         splits = text_splitter.split_documents(docs)
+        
+        # Add documents to the vector store
         await vectorstore.aadd_documents(splits)
 
         return {"status": "success", "filename": file.filename, "blob_url": blob.url}
@@ -115,12 +120,16 @@ async def upload_and_process(file: UploadFile = File(...)):
         print(f"ERROR during upload/processing: {e}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
-
 @app.post("/query/", summary="Query the RAG Chain")
-async def query_rag(query: str = Form(...)):
-    if not all([chat, prompt, vectorstore]):
-        raise HTTPException(status_code=503, detail="RAG components not initialized.")
-
+async def query_rag(
+    query: str = Form(...),
+    chat: ChatGroq = Depends(get_chat_model),
+    vectorstore: PGVector = Depends(get_vectorstore),
+    prompt: ChatPromptTemplate = Depends(get_prompt_template)
+):
+    """
+    This endpoint takes a query, retrieves context, and generates an answer.
+    """
     retriever = vectorstore.as_retriever()
     document_chain = create_stuff_documents_chain(chat, prompt)
     rag_chain = create_retrieval_chain(retriever, document_chain)
