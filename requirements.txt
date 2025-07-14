@@ -2,11 +2,11 @@ fastapi==0.111.0
 python-multipart
 groq
 
-
+Pinning langchain versions for stability
 langchain==0.2.5
 langchain-groq
 langchain-community==0.2.5
-langchain-postgres==0.1.0
+langchain-postgres==0.0.15
 
 
 pgvector
@@ -18,9 +18,7 @@ psycopg[binary]
 pypdf
 docx2txt
 
-
 vercel-blob
 httpx
-
 
 jinaai
