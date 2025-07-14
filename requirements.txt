@@ -2,7 +2,6 @@ fastapi==0.111.0
 python-multipart
 groq
 
-Pinning langchain versions for stability
 langchain==0.2.5
 langchain-groq
 langchain-community==0.2.5
