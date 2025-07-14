@@ -12,7 +12,6 @@ pgvector
 psycopg2-binary
 
 
-sentence-transformers
 pypdf
 python-docx
 docx2txt
@@ -20,3 +19,6 @@ docx2txt
 
 vercel-blob
 httpx
+
+
+jinaai
