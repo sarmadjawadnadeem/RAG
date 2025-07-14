@@ -1,19 +1,21 @@
-fastapi
-uvicorn
+fastapi==0.111.0
 python-multipart
 groq
-langchain
+
+
+langchain==0.2.5
 langchain-groq
-langchain-community
-langchain-postgres
+langchain-community==0.2.5
+langchain-postgres==0.1.0
 
 
 pgvector
-psycopg2-binary
+
+
+psycopg[binary]
 
 
 pypdf
-python-docx
 docx2txt
 
 
